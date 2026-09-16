@@ -1,0 +1,43 @@
+#messagesounds-settings {
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 10px;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+}
+
+.messagesounds-title {
+    font-weight: bold;
+    font-size: 1.05em;
+    margin-bottom: 12px;
+}
+
+.messagesounds-option {
+    margin: 8px 0;
+}
+
+.messagesounds-option label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.messagesounds-volume {
+    margin-top: 12px;
+}
+
+.messagesounds-volume label {
+    display: block;
+    margin-bottom: 6px;
+}
+
+#messagesounds-volume {
+    width: 100%;
+}
+
+#messagesounds-volume-value {
+    display: inline-block;
+    margin-top: 4px;
+    opacity: 0.8;
+}
