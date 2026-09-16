@@ -12,9 +12,10 @@ const defaultSettings = {
 
 let settings = loadSettings();
 
-let sendAudio;
-let receiveAudio;
-let audioUnlocked = false;
+let audioContext = null;
+let sendBuffer = null;
+let receiveBuffer = null;
+let loadingPromise = null;
 
 function loadSettings() {
     try {
@@ -27,7 +28,10 @@ function loadSettings() {
             };
         }
     } catch (error) {
-        console.error('[Message Sounds] Settings error:', error);
+        console.error(
+            '[Message Sounds] Settings error:',
+            error
+        );
     }
 
     return { ...defaultSettings };
@@ -40,138 +44,253 @@ function saveSettings() {
     );
 }
 
-function createAudio() {
-    const basePath = new URL('.', import.meta.url);
+/*
+ * Création du contexte audio.
+ *
+ * Contrairement à new Audio(), on n'utilise
+ * aucun lecteur média HTML.
+ */
+function getAudioContext() {
+    if (audioContext) {
+        return audioContext;
+    }
 
-    sendAudio = new Audio(
-        new URL('send.mp3', basePath).href
-    );
+    const AudioContext =
+        window.AudioContext ||
+        window.webkitAudioContext;
 
-    receiveAudio = new Audio(
-        new URL('receive.mp3', basePath).href
-    );
+    if (!AudioContext) {
+        console.warn(
+            '[Message Sounds] Web Audio API unavailable.'
+        );
 
-    sendAudio.preload = 'auto';
-    receiveAudio.preload = 'auto';
+        return null;
+    }
 
-    sendAudio.volume = settings.volume;
-    receiveAudio.volume = settings.volume;
+    try {
+        audioContext = new AudioContext();
 
-    sendAudio.load();
-    receiveAudio.load();
+        return audioContext;
+    } catch (error) {
+        console.error(
+            '[Message Sounds] Failed to create audio context:',
+            error
+        );
+
+        return null;
+    }
 }
 
 /*
- * Déverrouille l'audio après la première interaction
- * avec la page.
+ * Charge un MP3 dans un AudioBuffer.
  */
-function unlockAudio() {
-    if (audioUnlocked) {
-        return;
+async function loadSound(filename) {
+    const context = getAudioContext();
+
+    if (!context) {
+        return null;
     }
 
-    const audio = sendAudio;
+    try {
+        const url = new URL(
+            filename,
+            import.meta.url
+        ).href;
 
-    if (!audio) {
-        return;
-    }
+        const response = await fetch(url);
 
-    audio.muted = true;
-
-    const promise = audio.play();
-
-    if (promise) {
-        promise
-            .then(() => {
-                audio.pause();
-                audio.currentTime = 0;
-                audio.muted = false;
-
-                audioUnlocked = true;
-
-                console.log(
-                    '[Message Sounds] Audio unlocked'
-                );
-            })
-            .catch(() => {
-                audio.muted = false;
-            });
-    }
-}
-
-function playSound(audio) {
-    if (!audio || !settings.enabled) {
-        return;
-    }
-
-    audio.volume = settings.volume;
-    audio.currentTime = 0;
-
-    const promise = audio.play();
-
-    if (promise) {
-        promise.catch(error => {
-            console.warn(
-                '[Message Sounds] Playback blocked:',
-                error
+        if (!response.ok) {
+            throw new Error(
+                `HTTP ${response.status}`
             );
-        });
+        }
+
+        const arrayBuffer =
+            await response.arrayBuffer();
+
+        return await context.decodeAudioData(
+            arrayBuffer
+        );
+    } catch (error) {
+        console.error(
+            `[Message Sounds] Failed to load ${filename}:`,
+            error
+        );
+
+        return null;
     }
 }
 
-function playSendSound() {
+/*
+ * Précharge les deux sons.
+ */
+async function loadSounds() {
+    if (loadingPromise) {
+        return loadingPromise;
+    }
+
+    loadingPromise = (async () => {
+        sendBuffer =
+            await loadSound('send.mp3');
+
+        receiveBuffer =
+            await loadSound('receive.mp3');
+
+        console.log(
+            '[Message Sounds] Sounds loaded.'
+        );
+    })();
+
+    return loadingPromise;
+}
+
+/*
+ * Réactive uniquement le contexte audio.
+ *
+ * IMPORTANT :
+ * aucun son n'est joué ici.
+ * On ne fait donc plus le ancien :
+ *
+ * audio.play()
+ * audio.pause()
+ *
+ * qui pouvait provoquer des problèmes avec
+ * la musique en cours.
+ */
+async function resumeAudio() {
+    const context = getAudioContext();
+
+    if (!context) {
+        return;
+    }
+
+    try {
+        if (context.state === 'suspended') {
+            await context.resume();
+        }
+    } catch (error) {
+        console.debug(
+            '[Message Sounds] Audio resume skipped:',
+            error
+        );
+    }
+}
+
+/*
+ * Joue un AudioBuffer sans créer de lecteur <audio>.
+ */
+async function playSound(buffer) {
+    if (!buffer || !settings.enabled) {
+        return;
+    }
+
+    const context = getAudioContext();
+
+    if (!context) {
+        return;
+    }
+
+    try {
+        await resumeAudio();
+
+        const source =
+            context.createBufferSource();
+
+        const gain =
+            context.createGain();
+
+        source.buffer = buffer;
+
+        gain.gain.value =
+            settings.volume;
+
+        source.connect(gain);
+        gain.connect(context.destination);
+
+        source.start(0);
+
+        source.onended = () => {
+            try {
+                source.disconnect();
+                gain.disconnect();
+            } catch {
+                // Rien à faire
+            }
+        };
+    } catch (error) {
+        console.warn(
+            '[Message Sounds] Playback error:',
+            error
+        );
+    }
+}
+
+async function playSendSound() {
     if (!settings.sendEnabled) {
         return;
     }
 
-    playSound(sendAudio);
+    await loadSounds();
+
+    playSound(sendBuffer);
 }
 
-function playReceiveSound() {
+async function playReceiveSound() {
     if (!settings.receiveEnabled) {
         return;
     }
 
-    playSound(receiveAudio);
+    await loadSounds();
+
+    playSound(receiveBuffer);
 }
 
 /*
- * Première interaction utilisateur :
- * permet au navigateur d'autoriser ensuite
- * les sons déclenchés par SillyTavern.
+ * Prépare l'audio après la première interaction
+ * sans jouer de son.
  */
 function setupAudioUnlock() {
-    document.addEventListener(
-        'click',
-        unlockAudio,
-        {
-            once: true,
-            capture: true
-        }
-    );
+    const unlock = async () => {
+        await resumeAudio();
+        loadSounds();
+    };
 
     document.addEventListener(
-        'touchstart',
-        unlockAudio,
+        'pointerdown',
+        unlock,
         {
             once: true,
-            capture: true
+            capture: true,
+            passive: true
         }
     );
 
     document.addEventListener(
         'keydown',
-        unlockAudio,
+        unlock,
         {
             once: true,
-            capture: true
+            capture: true,
+            passive: true
+        }
+    );
+
+    document.addEventListener(
+        'touchstart',
+        unlock,
+        {
+            once: true,
+            capture: true,
+            passive: true
         }
     );
 }
 
 function createSettingsUI() {
     const extensionPanel =
-        document.querySelector('#extensions_settings');
+        document.querySelector(
+            '#extensions_settings'
+        );
 
     if (!extensionPanel) {
         return;
@@ -188,7 +307,8 @@ function createSettingsUI() {
     const container =
         document.createElement('div');
 
-    container.id = 'messagesounds-settings';
+    container.id =
+        'messagesounds-settings';
 
     container.innerHTML = `
         <div class="messagesounds-title">
@@ -279,64 +399,68 @@ function createSettingsUI() {
             '#messagesounds-test'
         );
 
-    enabled.addEventListener('change', event => {
-        settings.enabled =
-            event.target.checked;
+    enabled?.addEventListener(
+        'change',
+        event => {
+            settings.enabled =
+                event.target.checked;
 
-        saveSettings();
-    });
-
-    send.addEventListener('change', event => {
-        settings.sendEnabled =
-            event.target.checked;
-
-        saveSettings();
-    });
-
-    receive.addEventListener('change', event => {
-        settings.receiveEnabled =
-            event.target.checked;
-
-        saveSettings();
-    });
-
-    volume.addEventListener('input', event => {
-        settings.volume =
-            Number(event.target.value) / 100;
-
-        volumeValue.textContent =
-            `${event.target.value}%`;
-
-        if (sendAudio) {
-            sendAudio.volume =
-                settings.volume;
+            saveSettings();
         }
+    );
 
-        if (receiveAudio) {
-            receiveAudio.volume =
-                settings.volume;
+    send?.addEventListener(
+        'change',
+        event => {
+            settings.sendEnabled =
+                event.target.checked;
+
+            saveSettings();
         }
+    );
 
-        saveSettings();
-    });
+    receive?.addEventListener(
+        'change',
+        event => {
+            settings.receiveEnabled =
+                event.target.checked;
 
-    test.addEventListener('click', () => {
-        audioUnlocked = true;
+            saveSettings();
+        }
+    );
 
-        playSound(sendAudio);
+    volume?.addEventListener(
+        'input',
+        event => {
+            settings.volume =
+                Number(event.target.value) / 100;
 
-        setTimeout(() => {
-            playSound(receiveAudio);
-        }, 500);
-    });
+            volumeValue.textContent =
+                `${event.target.value}%`;
+
+            saveSettings();
+        }
+    );
+
+    test?.addEventListener(
+        'click',
+        async () => {
+            await resumeAudio();
+            await loadSounds();
+
+            playSound(sendBuffer);
+
+            setTimeout(() => {
+                playSound(receiveBuffer);
+            }, 500);
+        }
+    );
 }
 
 function init() {
     console.log(
         '[Message Sounds] Initializing...'
     );
-
-    createAudio();
 
     setupAudioUnlock();
 
