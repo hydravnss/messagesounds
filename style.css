@@ -2,33 +2,35 @@
     margin-top: 10px;
     padding: 12px;
     border-radius: 10px;
-    background: var(--SmartThemeBlurTintColor);
     border: 1px solid var(--SmartThemeBorderColor);
+    background: var(--SmartThemeBlurTintColor);
 }
 
 .messagesounds-title {
-    font-weight: bold;
     font-size: 1.05em;
+    font-weight: bold;
     margin-bottom: 12px;
 }
 
 .messagesounds-option {
-    margin: 8px 0;
-}
-
-.messagesounds-option label {
     display: flex;
     align-items: center;
     gap: 8px;
+    margin: 9px 0;
     cursor: pointer;
 }
 
-.messagesounds-volume {
-    margin-top: 12px;
+.messagesounds-option input {
+    margin: 0;
 }
 
-.messagesounds-volume label {
-    display: block;
+.messagesounds-volume {
+    margin-top: 14px;
+}
+
+.messagesounds-volume-label {
+    display: flex;
+    justify-content: space-between;
     margin-bottom: 6px;
 }
 
@@ -36,8 +38,7 @@
     width: 100%;
 }
 
-#messagesounds-volume-value {
-    display: inline-block;
-    margin-top: 4px;
-    opacity: 0.8;
+#messagesounds-test {
+    width: 100%;
+    margin-top: 12px;
 }
