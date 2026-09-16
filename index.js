@@ -1,7 +1,6 @@
 import { eventSource, event_types } from '../../../../script.js';
 
 const MODULE_NAME = 'messagesounds';
-
 const SETTINGS_KEY = `${MODULE_NAME}_settings`;
 
 const defaultSettings = {
@@ -13,8 +12,9 @@ const defaultSettings = {
 
 let settings = loadSettings();
 
-let sendAudio = null;
-let receiveAudio = null;
+let sendAudio;
+let receiveAudio;
+let audioUnlocked = false;
 
 function loadSettings() {
     try {
@@ -27,7 +27,7 @@ function loadSettings() {
             };
         }
     } catch (error) {
-        console.error('[Message Sounds] Failed to load settings:', error);
+        console.error('[Message Sounds] Settings error:', error);
     }
 
     return { ...defaultSettings };
@@ -40,7 +40,7 @@ function saveSettings() {
     );
 }
 
-function createAudioFiles() {
+function createAudio() {
     const basePath = new URL('.', import.meta.url);
 
     sendAudio = new Audio(
@@ -56,6 +56,47 @@ function createAudioFiles() {
 
     sendAudio.volume = settings.volume;
     receiveAudio.volume = settings.volume;
+
+    sendAudio.load();
+    receiveAudio.load();
+}
+
+/*
+ * Déverrouille l'audio après la première interaction
+ * avec la page.
+ */
+function unlockAudio() {
+    if (audioUnlocked) {
+        return;
+    }
+
+    const audio = sendAudio;
+
+    if (!audio) {
+        return;
+    }
+
+    audio.muted = true;
+
+    const promise = audio.play();
+
+    if (promise) {
+        promise
+            .then(() => {
+                audio.pause();
+                audio.currentTime = 0;
+                audio.muted = false;
+
+                audioUnlocked = true;
+
+                console.log(
+                    '[Message Sounds] Audio unlocked'
+                );
+            })
+            .catch(() => {
+                audio.muted = false;
+            });
+    }
 }
 
 function playSound(audio) {
@@ -63,30 +104,22 @@ function playSound(audio) {
         return;
     }
 
-    try {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.volume = settings.volume;
+    audio.volume = settings.volume;
+    audio.currentTime = 0;
 
-        const promise = audio.play();
+    const promise = audio.play();
 
-        if (promise instanceof Promise) {
-            promise.catch(error => {
-                console.warn(
-                    '[Message Sounds] Audio playback blocked:',
-                    error
-                );
-            });
-        }
-    } catch (error) {
-        console.error(
-            '[Message Sounds] Failed to play sound:',
-            error
-        );
+    if (promise) {
+        promise.catch(error => {
+            console.warn(
+                '[Message Sounds] Playback blocked:',
+                error
+            );
+        });
     }
 }
 
-function handleMessageSent() {
+function playSendSound() {
     if (!settings.sendEnabled) {
         return;
     }
@@ -94,7 +127,7 @@ function handleMessageSent() {
     playSound(sendAudio);
 }
 
-function handleMessageReceived() {
+function playReceiveSound() {
     if (!settings.receiveEnabled) {
         return;
     }
@@ -102,8 +135,58 @@ function handleMessageReceived() {
     playSound(receiveAudio);
 }
 
+/*
+ * Première interaction utilisateur :
+ * permet au navigateur d'autoriser ensuite
+ * les sons déclenchés par SillyTavern.
+ */
+function setupAudioUnlock() {
+    document.addEventListener(
+        'click',
+        unlockAudio,
+        {
+            once: true,
+            capture: true
+        }
+    );
+
+    document.addEventListener(
+        'touchstart',
+        unlockAudio,
+        {
+            once: true,
+            capture: true
+        }
+    );
+
+    document.addEventListener(
+        'keydown',
+        unlockAudio,
+        {
+            once: true,
+            capture: true
+        }
+    );
+}
+
 function createSettingsUI() {
-    const container = document.createElement('div');
+    const extensionPanel =
+        document.querySelector('#extensions_settings');
+
+    if (!extensionPanel) {
+        return;
+    }
+
+    if (
+        document.querySelector(
+            '#messagesounds-settings'
+        )
+    ) {
+        return;
+    }
+
+    const container =
+        document.createElement('div');
 
     container.id = 'messagesounds-settings';
 
@@ -112,43 +195,40 @@ function createSettingsUI() {
             🔊 Message Sounds
         </div>
 
-        <div class="messagesounds-option">
-            <label>
-                <input
-                    type="checkbox"
-                    id="messagesounds-enabled"
-                    ${settings.enabled ? 'checked' : ''}
-                >
-                Activer les sons
-            </label>
-        </div>
+        <label class="messagesounds-option">
+            <input
+                type="checkbox"
+                id="messagesounds-enabled"
+                ${settings.enabled ? 'checked' : ''}
+            >
+            <span>Activer les sons</span>
+        </label>
 
-        <div class="messagesounds-option">
-            <label>
-                <input
-                    type="checkbox"
-                    id="messagesounds-send"
-                    ${settings.sendEnabled ? 'checked' : ''}
-                >
-                📤 Son à l'envoi
-            </label>
-        </div>
+        <label class="messagesounds-option">
+            <input
+                type="checkbox"
+                id="messagesounds-send"
+                ${settings.sendEnabled ? 'checked' : ''}
+            >
+            <span>📤 Son à l'envoi</span>
+        </label>
 
-        <div class="messagesounds-option">
-            <label>
-                <input
-                    type="checkbox"
-                    id="messagesounds-receive"
-                    ${settings.receiveEnabled ? 'checked' : ''}
-                >
-                📥 Son à la réponse du bot
-            </label>
-        </div>
+        <label class="messagesounds-option">
+            <input
+                type="checkbox"
+                id="messagesounds-receive"
+                ${settings.receiveEnabled ? 'checked' : ''}
+            >
+            <span>📥 Son à la réponse du bot</span>
+        </label>
 
         <div class="messagesounds-volume">
-            <label for="messagesounds-volume">
+            <div class="messagesounds-volume-label">
                 🔉 Volume
-            </label>
+                <span id="messagesounds-volume-value">
+                    ${Math.round(settings.volume * 100)}%
+                </span>
+            </div>
 
             <input
                 type="range"
@@ -157,53 +237,70 @@ function createSettingsUI() {
                 max="100"
                 value="${Math.round(settings.volume * 100)}"
             >
-
-            <span id="messagesounds-volume-value">
-                ${Math.round(settings.volume * 100)}%
-            </span>
         </div>
+
+        <button
+            id="messagesounds-test"
+            class="menu_button"
+        >
+            🔊 Tester les sons
+        </button>
     `;
-
-    const extensionPanel =
-        document.querySelector('#extensions_settings');
-
-    if (!extensionPanel) {
-        return;
-    }
 
     extensionPanel.appendChild(container);
 
     const enabled =
-        document.querySelector('#messagesounds-enabled');
+        document.querySelector(
+            '#messagesounds-enabled'
+        );
 
     const send =
-        document.querySelector('#messagesounds-send');
+        document.querySelector(
+            '#messagesounds-send'
+        );
 
     const receive =
-        document.querySelector('#messagesounds-receive');
+        document.querySelector(
+            '#messagesounds-receive'
+        );
 
     const volume =
-        document.querySelector('#messagesounds-volume');
+        document.querySelector(
+            '#messagesounds-volume'
+        );
 
     const volumeValue =
-        document.querySelector('#messagesounds-volume-value');
+        document.querySelector(
+            '#messagesounds-volume-value'
+        );
 
-    enabled?.addEventListener('change', event => {
-        settings.enabled = event.target.checked;
+    const test =
+        document.querySelector(
+            '#messagesounds-test'
+        );
+
+    enabled.addEventListener('change', event => {
+        settings.enabled =
+            event.target.checked;
+
         saveSettings();
     });
 
-    send?.addEventListener('change', event => {
-        settings.sendEnabled = event.target.checked;
+    send.addEventListener('change', event => {
+        settings.sendEnabled =
+            event.target.checked;
+
         saveSettings();
     });
 
-    receive?.addEventListener('change', event => {
-        settings.receiveEnabled = event.target.checked;
+    receive.addEventListener('change', event => {
+        settings.receiveEnabled =
+            event.target.checked;
+
         saveSettings();
     });
 
-    volume?.addEventListener('input', event => {
+    volume.addEventListener('input', event => {
         settings.volume =
             Number(event.target.value) / 100;
 
@@ -211,40 +308,53 @@ function createSettingsUI() {
             `${event.target.value}%`;
 
         if (sendAudio) {
-            sendAudio.volume = settings.volume;
+            sendAudio.volume =
+                settings.volume;
         }
 
         if (receiveAudio) {
-            receiveAudio.volume = settings.volume;
+            receiveAudio.volume =
+                settings.volume;
         }
 
         saveSettings();
     });
+
+    test.addEventListener('click', () => {
+        audioUnlocked = true;
+
+        playSound(sendAudio);
+
+        setTimeout(() => {
+            playSound(receiveAudio);
+        }, 500);
+    });
 }
 
 function init() {
-    console.log('[Message Sounds] Initializing...');
+    console.log(
+        '[Message Sounds] Initializing...'
+    );
 
-    createAudioFiles();
+    createAudio();
+
+    setupAudioUnlock();
 
     eventSource.on(
         event_types.MESSAGE_SENT,
-        handleMessageSent
+        playSendSound
     );
 
     eventSource.on(
         event_types.MESSAGE_RECEIVED,
-        handleMessageReceived
+        playReceiveSound
     );
 
     createSettingsUI();
 
-    console.log('[Message Sounds] Ready!');
+    console.log(
+        '[Message Sounds] Ready!'
+    );
 }
 
-if (
-    typeof eventSource !== 'undefined' &&
-    typeof event_types !== 'undefined'
-) {
-    init();
-}
+init();
